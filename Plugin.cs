@@ -1,6 +1,6 @@
 using System;
 using System.Diagnostics;
-using System.Linq;
+using System.IO;
 using System.Security.Principal;
 using System.Windows.Forms;
 using ClassIsland.Core;
@@ -9,7 +9,7 @@ using ClassIsland.Core.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace UACComp;
+namespace UACHelper;
 
 /// <summary>
 /// UAC Helper 插件入口类
@@ -18,37 +18,89 @@ namespace UACComp;
 [PluginEntrance]
 public class Plugin : PluginBase
 {
+    // 日志文件路径
+    private static readonly string LogFilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "ClassIsland",
+        "Logs",
+        "UACHelper.log");
+
     /// <summary>
     /// 无参构造函数（ClassIsland 需要）
     /// </summary>
     public Plugin()
     {
+        Log("========== UACHelper 启动 ==========");
     }
 
     /// <summary>
     /// 插件初始化方法
     /// 在应用程序启动时调用
     /// </summary>
-    /// <param name="context">主机构建上下文</param>
-    /// <param name="services">服务集合</param>
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
-        // 检测管理员权限
-        if (!IsRunningAsAdmin())
+        try
         {
-            RestartAsAdmin();
+            Log("Initialize 开始");
+
+            // 检测管理员权限
+            bool isAdmin = IsRunningAsAdmin();
+            Log($"管理员权限: {isAdmin}");
+
+            if (!isAdmin)
+            {
+                Log("非管理员权限，准备重启");
+                RestartAsAdmin();
+            }
+            else
+            {
+                Log("已是管理员权限");
+            }
+
+            Log("Initialize 完成");
         }
+        catch (Exception ex)
+        {
+            Log($"Initialize 异常: {ex.Message}");
+            Log($"堆栈: {ex.StackTrace}");
+        }
+    }
+
+    /// <summary>
+    /// 写入日志
+    /// </summary>
+    private static void Log(string message)
+    {
+        try
+        {
+            string logDir = Path.GetDirectoryName(LogFilePath);
+            if (!string.IsNullOrEmpty(logDir) && !Directory.Exists(logDir))
+            {
+                Directory.CreateDirectory(logDir);
+            }
+
+            string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+            File.AppendAllText(LogFilePath, logEntry + Environment.NewLine);
+        }
+        catch { }
     }
 
     /// <summary>
     /// 检测当前是否以管理员权限运行
     /// </summary>
-    /// <returns>true: 是管理员, false: 不是管理员</returns>
     private bool IsRunningAsAdmin()
     {
-        WindowsIdentity identity = WindowsIdentity.GetCurrent();
-        WindowsPrincipal principal = new WindowsPrincipal(identity);
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        try
+        {
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            WindowsPrincipal principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch (Exception ex)
+        {
+            Log($"检测权限异常: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>
@@ -56,31 +108,47 @@ public class Plugin : PluginBase
     /// </summary>
     private void RestartAsAdmin()
     {
-        // 获取当前进程路径，将 .dll 替换为 .exe
-        string executablePath = Environment.ProcessPath?.Replace(".dll", ".exe") ?? 
-                              Application.ExecutablePath.Replace(".dll", ".exe");
-
-        // 创建启动信息
-        ProcessStartInfo processStartInfo = new ProcessStartInfo()
+        try
         {
-            FileName = executablePath,
-            ArgumentList = { "-m" },
-            Verb = "runas",
-            UseShellExecute = true
-        };
+            Log("RestartAsAdmin 开始");
 
-        // 添加当前命令行参数（排除程序路径本身）
-        var args = Environment.GetCommandLineArgs().ToList();
-        args.RemoveAt(0);
-        foreach (var arg in args)
-        {
-            processStartInfo.ArgumentList.Add(arg);
+            // 获取 exe 路径
+            string executablePath = Environment.ProcessPath?.Replace(".dll", ".exe") ?? 
+                                  Application.ExecutablePath?.Replace(".dll", ".exe");
+
+            Log($"目标路径: {executablePath}");
+
+            if (string.IsNullOrEmpty(executablePath) || !File.Exists(executablePath))
+            {
+                Log("错误: 找不到可执行文件");
+                return;
+            }
+
+            // 创建启动信息
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = executablePath,
+                Arguments = "-m",
+                Verb = "runas",
+                UseShellExecute = true
+            };
+
+            Log("启动新进程");
+            Process.Start(startInfo);
+            Log("新进程已启动");
+
+            // 延迟后停止当前应用
+            Log("准备停止当前应用");
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                await System.Threading.Tasks.Task.Delay(2000);
+                Log("执行停止");
+                AppBase.Current?.Stop();
+            });
         }
-
-        // 启动新进程
-        Process.Start(processStartInfo);
-
-        // 停止当前应用
-        AppBase.Current?.Stop();
+        catch (Exception ex)
+        {
+            Log($"RestartAsAdmin 异常: {ex.Message}");
+        }
     }
 }
