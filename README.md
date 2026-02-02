@@ -16,4 +16,4 @@
 
 ## 许可证
 
-本项目基于 [GNU General Public License v3.0](https://github.com/Ma-fangxiu/uaccomp/blob/master/LICENSE.txt) 许可。
+本项目基于 [GNU General Public License v3.0](https://github.com/Ma-fangxiu/uaccomp/blob/master/LICENSE) 许可。
