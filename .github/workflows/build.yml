@@ -1,0 +1,125 @@
+name: Build and Release Plugin
+
+# 手动触发工作流
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (格式: x.x.x.x)'
+        required: true
+        default: '1.1.0.0'
+      prerelease:
+        description: '是否为预发布版本'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PLUGIN_NAME: UACComp
+  PLUGIN_ID: UACComp
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      # 1. 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # 2. 设置 .NET 环境
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      
+      # 3. 还原依赖
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      # 4. 构建项目
+      - name: Build project
+        run: dotnet build --configuration Release --no-restore
+      
+      # 5. 发布项目（一键打包）
+      - name: Publish and pack plugin
+        run: dotnet publish -p:CreateCipx=true --configuration Release --no-build
+      
+      # 6. 上传构建产物
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-package
+          path: cipx/*.cipx
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      # 1. 下载构建产物
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-package
+          path: ./cipx
+      
+      # 2. 计算 MD5 校验和
+      - name: Generate MD5 checksums
+        run: |
+          cd cipx
+          echo "# MD5 Checksums" > ../checksums.md
+          echo "" >> ../checksums.md
+          for file in *.cipx; do
+            md5=$(md5sum "$file" | awk '{print $1}')
+            echo "- \`$file\`: \`$md5\`" >> ../checksums.md
+            echo "$md5  $file" >> ../checksums.txt
+          done
+          cat ../checksums.md
+      
+      # 3. 读取 checksums.md 内容用于 Release
+      - name: Read checksums
+        id: checksums
+        run: |
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          cat checksums.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      # 4. 创建 GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ env.PLUGIN_NAME }} ${{ github.event.inputs.version }}
+          body: |
+            ## ${{ env.PLUGIN_NAME }} ${{ github.event.inputs.version }}
+            
+            ### 下载
+            请下载下方的 `.cipx` 文件安装插件。
+            
+            ### MD5 校验
+            ${{ steps.checksums.outputs.content }}
+            
+            ### 安装说明
+            1. 下载 `.cipx` 文件
+            2. 在 ClassIsland 中打开插件页面
+            3. 点击"安装本地插件"
+            4. 选择下载的 `.cipx` 文件
+          files: cipx/*.cipx
+          prerelease: ${{ github.event.inputs.prerelease }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 可选：自动更新插件索引（需要配置仓库密钥）
+  # update-index:
+  #   needs: release
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Update Plugin Index
+  #       # 这里可以添加更新插件索引的逻辑
+  #       run: echo "Plugin index update would happen here"
+
