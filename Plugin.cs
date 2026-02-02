@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq
 using System.Security.Principal;
 using System.Windows.Forms;
 using ClassIsland.Core;
@@ -9,10 +10,10 @@ using ClassIsland.Core.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-namespace UACHelper;
+namespace UACComp;
 
 /// <summary>
-/// UAC Helper 插件入口类
+/// UAC Comp 插件入口类
 /// 检测管理员权限，非管理员时自动以管理员身份重启
 /// </summary>
 [PluginEntrance]
@@ -30,7 +31,7 @@ public class Plugin : PluginBase
     /// </summary>
     public Plugin()
     {
-        Log("========== UACHelper 启动 ==========");
+        Log("========== UACComp 启动 ==========");
     }
 
     /// <summary>
