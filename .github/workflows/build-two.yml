@@ -8,16 +8,6 @@ on:
         description: '版本号 (如 1.0.0.0)'
         required: true
         type: string
-      release:
-        description: '是否创建 GitHub Release'
-        required: true
-        type: boolean
-        default: true
-      draft:
-        description: '是否为草稿 Release'
-        required: true
-        type: boolean
-        default: true
 
 env:
   PLUGIN_NAME: UACComp
