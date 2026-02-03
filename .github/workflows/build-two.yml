@@ -25,7 +25,7 @@ on:
         default: true
 
 env:
-  PLUGIN_NAME: UACComp  # 插件名称（前缀）
+  PLUGIN_NAME: UACComp
 
 jobs:
   build:
@@ -47,55 +47,45 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Build & Package
+      - name: Build and Package
         id: build-step
         shell: pwsh
         run: |
-          # 查找项目文件
           $csproj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
           if (-not $csproj) {
-            Write-Error "❌ 未找到 .csproj 文件"
+            Write-Error "未找到 .csproj 文件"
             exit 1
           }
-          Write-Host "📄 项目: $($csproj.FullName)" -ForegroundColor Gray
+          Write-Host "项目: $($csproj.FullName)"
           
-          # 获取版本号
           if ("${{ github.event.inputs.version }}") {
             $version = "${{ github.event.inputs.version }}"
           } else {
             [xml]$proj = Get-Content $csproj.FullName
             $version = $proj.Project.PropertyGroup.Version
           }
-          Write-Host "🔖 版本: $version" -ForegroundColor Cyan
+          Write-Host "版本: $version"
           echo "version=$version" >> $env:GITHUB_OUTPUT
           
-          # 创建临时输出目录
           $OutputPath = "./output"
           if (Test-Path $OutputPath) {
             Remove-Item $OutputPath -Recurse -Force
           }
           New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
           
-          # 还原依赖
-          Write-Host "📦 还原 NuGet 包..." -ForegroundColor Yellow
+          Write-Host "还原 NuGet 包..."
           dotnet restore $csproj.FullName
           if ($LASTEXITCODE -ne 0) { throw "还原失败" }
           
-          # 构建
-          Write-Host "🔨 编译项目..." -ForegroundColor Yellow
+          Write-Host "编译项目..."
           dotnet build $csproj.FullName -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { throw "构建失败" }
           
-          # 发布到临时目录
           $PublishPath = "$OutputPath/publish"
-          Write-Host "📤 发布项目到 $PublishPath..." -ForegroundColor Yellow
-          dotnet publish $csproj.FullName `
-            -c Release `
-            --no-build `
-            -o $PublishPath
+          Write-Host "发布项目..."
+          dotnet publish $csproj.FullName -c Release --no-build -o $PublishPath
           if ($LASTEXITCODE -ne 0) { throw "发布失败" }
           
-          # 定义需要打包的文件列表（基于 PLUGIN_NAME）
           $pluginName = "${{ env.PLUGIN_NAME }}"
           $filesToPack = @(
             "$PublishPath/$pluginName.pdb",
@@ -106,20 +96,14 @@ jobs:
             "$PublishPath/icon.png"
           )
           
-          # 检查文件是否存在
-          Write-Host ""
-          Write-Host "📂 检查需要打包的文件：" -ForegroundColor Cyan
+          Write-Host "检查需要打包的文件："
           $existingFiles = @()
           foreach ($file in $filesToPack) {
             if (Test-Path $file) {
-              $item = Get-Item $file
-              $size = if ($item.Length -lt 1KB) { "$($item.Length) B" } 
-                      elseif ($item.Length -lt 1MB) { "{0:F2} KB" -f ($item.Length/1KB) }
-                      else { "{0:F2} MB" -f ($item.Length/1MB) }
-              Write-Host "   ✅ $(Split-Path $file -Leaf) ($size)" -ForegroundColor Green
+              Write-Host "  找到: $(Split-Path $file -Leaf)"
               $existingFiles += $file
             } else {
-              Write-Host "   ❌ $(Split-Path $file -Leaf) - 不存在" -ForegroundColor Red
+              Write-Host "  跳过: $(Split-Path $file -Leaf) (不存在)"
             }
           }
           
@@ -127,48 +111,35 @@ jobs:
             throw "没有找到任何要打包的文件！"
           }
           
-          # 创建临时目录存放要打包的文件（保持根目录结构）
           $PackTempPath = "$OutputPath/pack_temp"
           New-Item -ItemType Directory -Path $PackTempPath -Force | Out-Null
           
-          # 复制文件到临时目录
           foreach ($file in $existingFiles) {
             Copy-Item $file $PackTempPath/
           }
           
-          # 打包为 .cipx
-          Write-Host ""
-          Write-Host "📦 正在打包为 .cipx..." -ForegroundColor Yellow
           $zipPath = "$OutputPath/$pluginName.zip"
           $cipxPath = "$OutputPath/$pluginName.cipx"
           
           Compress-Archive -Path "$PackTempPath/*" -DestinationPath $zipPath -Force
           Rename-Item $zipPath $cipxPath
           
-          # 清理临时目录
           Remove-Item $PublishPath -Recurse -Force
           Remove-Item $PackTempPath -Recurse -Force
           
-          # 显示结果
-          $cipxSize = (Get-Item $cipxPath).Length
-          $cipxSizeStr = if ($cipxSize -lt 1KB) { "$cipxSize B" } 
-                         elseif ($cipxSize -lt 1MB) { "{0:F2} KB" -f ($cipxSize/1KB) }
-                         else { "{0:F2} MB" -f ($cipxSize/1MB) }
-          Write-Host ""
-          Write-Host "✅ 打包完成：$pluginName.cipx ($cipxSizeStr)" -ForegroundColor Green
+          Write-Host "打包完成: $pluginName.cipx"
 
-      # 上传 CIPX 文件
-      - 名字: Upload CIPX Artifact
+      - name: Upload CIPX Artifact
         uses: actions/upload-artifact@v4
         with:
-          名字: ${{ env.PLUGIN_NAME }}_cipx
+          name: ${{ env.PLUGIN_NAME }}_cipx
           path: ./output/*.cipx
           if-no-files-found: error
           retention-days: 30
 
   release:
     runs-on: windows-2022
-    名字: Create Release
+    name: Create Release
     needs: build
     if: ${{ github.event.inputs.release == true && github.event_name == 'workflow_dispatch' }}
     
@@ -225,7 +196,7 @@ jobs:
           $fullContent = $changelog + "`n`n" + $md5Summary
           $fullContent | Out-File -FilePath "./release-note.md" -Encoding utf8
           
-          Write-Host "生成的发布说明：" -ForegroundColor Gray
+          Write-Host "生成的发布说明"
           Get-Content "./release-note.md"
 
       - 名字: Create GitHub Release
