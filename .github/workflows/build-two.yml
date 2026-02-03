@@ -1,17 +1,31 @@
 name: Build & Release
 
 on:
-  # 手动触发，支持发布
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+  
   workflow_dispatch:
     inputs:
       version:
         description: '版本号 (如 1.0.0.0)'
         required: true
         type: string
+      release:
+        description: '是否创建 GitHub Release'
+        required: true
+        type: boolean
+        default: true
+      draft:
+        description: '是否为草稿 Release'
+        required: true
+        type: boolean
+        default: true
 
 env:
   PLUGIN_NAME: UACComp
-  PROJECT_PATH: ./UACComp.csproj
 
 jobs:
   build:
@@ -19,7 +33,7 @@ jobs:
     name: Build Plugin
     
     outputs:
-      version: ${{ steps.get-version.outputs.version }}
+      version: ${{ steps.build-step.outputs.version }}
     
     steps:
       - name: Checkout code
@@ -33,39 +47,65 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.PROJECT_PATH }}
-
-      # 自动读取版本号（从 csproj 或输入）
-      - name: Get Version
-        id: get-version
+      - name: Build & Publish
+        id: build-step
         shell: pwsh
         run: |
+          # 查找项目文件
+          $csproj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
+          if (-not $csproj) {
+            Write-Error "❌ 未找到 .csproj 文件"
+            exit 1
+          }
+          Write-Host "📄 项目: $($csproj.FullName)" -ForegroundColor Gray
+          
+          # 获取版本号
           if ("${{ github.event.inputs.version }}") {
             $version = "${{ github.event.inputs.version }}"
           } else {
-            [xml]$csproj = Get-Content ${{ env.PROJECT_PATH }}
-            $version = $csproj.Project.PropertyGroup.Version
+            [xml]$proj = Get-Content $csproj.FullName
+            $version = $proj.Project.PropertyGroup.Version
           }
+          Write-Host "🔖 版本: $version" -ForegroundColor Cyan
           echo "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "版本号: $version"
-
-      - name: Build & Publish
-        shell: pwsh
-        run: |
-          Write-Host "开始构建 ${{ env.PLUGIN_NAME }} v${{ steps.get-version.outputs.version }}"
-          dotnet publish ${{ env.PROJECT_PATH }} `
+          
+          # 清理并创建输出目录
+          $OutputPath = "./output"
+          if (Test-Path $OutputPath) {
+            Remove-Item $OutputPath -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
+          
+          # 还原依赖
+          Write-Host "📦 还原 NuGet 包..." -ForegroundColor Yellow
+          dotnet restore $csproj.FullName
+          if ($LASTEXITCODE -ne 0) { throw "还原失败" }
+          
+          # 构建
+          Write-Host "🔨 编译项目..." -ForegroundColor Yellow
+          dotnet build $csproj.FullName -c Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw "构建失败" }
+          
+          # 发布（生成 CIPX）
+          Write-Host "📤 发布项目..." -ForegroundColor Yellow
+          dotnet publish $csproj.FullName `
             -c Release `
-            --no-restore `
+            --no-build `
             -p:CreateCipx=true `
-            -o ./output
+            -o $OutputPath
+          if ($LASTEXITCODE -ne 0) { throw "发布失败" }
+          
+          # 显示结果
+          Write-Host ""
+          Write-Host "✅ 构建完成！产物列表：" -ForegroundColor Green
+          Get-ChildItem $OutputPath -Recurse | ForEach-Object {
+            $size = if ($_.Length -lt 1KB) { "$($_.Length) B" } 
+                    elseif ($_.Length -lt 1MB) { "{0:F2} KB" -f ($_.Length/1KB) }
+                    else { "{0:F2} MB" -f ($_.Length/1MB) }
+            Write-Host "   📎 $($_.Name) ($size)" -ForegroundColor Gray
+          }
 
-      - name: Check Output
-        run: |
-          Write-Host "构建产物："
-          Get-ChildItem ./output -Recurse
-
-      # 上传插件包到 Artifacts
+      # 上传 CIPX 文件（必需）
       - name: Upload CIPX Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -74,20 +114,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # 上传 NuGet 包（如果有）
+      # 上传 NuGet 包（可选）
       - name: Upload NuPkg Artifact
         uses: actions/upload-artifact@v4
-        if: exists('./output/*.nupkg')
+        if: ${{ hashFiles('./output/*.nupkg') != '' }}
         with:
           name: ${{ env.PLUGIN_NAME }}_nupkg
           path: ./output/*.nupkg
-          retention-days: 30
+          retention-days: 7
 
   release:
     runs-on: windows-2022
     name: Create Release
     needs: build
-    if: ${{ github.event.inputs.release == true }}
+    if: ${{ github.event.inputs.release == true && github.event_name == 'workflow_dispatch' }}
     
     permissions:
       contents: write
@@ -131,7 +171,7 @@ jobs:
             $hashes.Add($_.Name, $hash.Hash)
           }
           
-          # 添加隐藏元数据（供 ClassIsland 读取）
+          # 添加隐藏元数据
           $json = ConvertTo-Json $hashes -Compress
           $md5Summary += "`n`n<!-- CLASSISLAND_PKG_MD5 ${json} -->"
           
@@ -145,7 +185,7 @@ jobs:
           $fullContent = $changelog + "`n`n" + $md5Summary
           $fullContent | Out-File -FilePath "./release-note.md" -Encoding utf8
           
-          Write-Host "生成的发布说明："
+          Write-Host "生成的发布说明：" -ForegroundColor Gray
           Get-Content "./release-note.md"
 
       - name: Create GitHub Release
@@ -159,4 +199,3 @@ jobs:
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
           generateReleaseNotes: false
-
