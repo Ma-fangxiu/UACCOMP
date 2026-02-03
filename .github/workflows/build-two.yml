@@ -1,4 +1,4 @@
-name: Build & Release
+name: Build and Release
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Setup .NET 8
+      - name: Setup NET 8
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -144,22 +144,22 @@ jobs:
     if: ${{ github.event.inputs.release == true && github.event_name == 'workflow_dispatch' }}
     
     permissions:
-      contents: 撰写
+      contents: write
     
     steps:
-      - 名字: Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - 名字: Download Artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
           pattern: ${{ env.PLUGIN_NAME }}_*
           merge-multiple: true
 
-      - 名字: Generate Release Note
+      - name: Generate Release Note
         shell: pwsh
         run: |
           $version = "${{ needs.build.outputs.version }}"
@@ -199,14 +199,14 @@ jobs:
           Write-Host "生成的发布说明"
           Get-Content "./release-note.md"
 
-      - 名字: Create GitHub Release
+      - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "./artifacts/*"
           tag: v${{ needs.build.outputs.version }}
-          名字: ${{ env.PLUGIN_NAME }} v${{ needs.build.outputs.version }}
+          name: ${{ env.PLUGIN_NAME }} v${{ needs.build.outputs.version }}
           bodyFile: ./release-note.md
-          草案: ${{ github.event.inputs.draft }}
+          draft: ${{ github.event.inputs.draft }}
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
           generateReleaseNotes: false
