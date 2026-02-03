@@ -1,13 +1,6 @@
 name: Build & Release
 
 on:
-  # 推送时自动构建
-  push:
-    branches: [main, master]
-    paths-ignore:
-      - '**.md'
-      - '.github/**'
-  
   # 手动触发，支持发布
   workflow_dispatch:
     inputs:
