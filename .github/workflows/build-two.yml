@@ -1,0 +1,179 @@
+name: Build & Release
+
+on:
+  # 推送时自动构建
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '**.md'
+      - '.github/**'
+  
+  # 手动触发，支持发布
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 1.0.0.0)'
+        required: true
+        type: string
+      release:
+        description: '是否创建 GitHub Release'
+        required: true
+        type: boolean
+        default: true
+      draft:
+        description: '是否为草稿 Release'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  PLUGIN_NAME: UACComp
+  PROJECT_PATH: ./UACComp.csproj
+
+jobs:
+  build:
+    runs-on: windows-2022
+    name: Build Plugin
+    
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.PROJECT_PATH }}
+
+      # 自动读取版本号（从 csproj 或输入）
+      - name: Get Version
+        id: get-version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}") {
+            $version = "${{ github.event.inputs.version }}"
+          } else {
+            [xml]$csproj = Get-Content ${{ env.PROJECT_PATH }}
+            $version = $csproj.Project.PropertyGroup.Version
+          }
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "版本号: $version"
+
+      - name: Build & Publish
+        shell: pwsh
+        run: |
+          Write-Host "开始构建 ${{ env.PLUGIN_NAME }} v${{ steps.get-version.outputs.version }}"
+          dotnet publish ${{ env.PROJECT_PATH }} `
+            -c Release `
+            --no-restore `
+            -p:CreateCipx=true `
+            -o ./output
+
+      - name: Check Output
+        run: |
+          Write-Host "构建产物："
+          Get-ChildItem ./output -Recurse
+
+      # 上传插件包到 Artifacts
+      - name: Upload CIPX Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}_cipx
+          path: ./output/*.cipx
+          if-no-files-found: error
+          retention-days: 30
+
+      # 上传 NuGet 包（如果有）
+      - name: Upload NuPkg Artifact
+        uses: actions/upload-artifact@v4
+        if: exists('./output/*.nupkg')
+        with:
+          name: ${{ env.PLUGIN_NAME }}_nupkg
+          path: ./output/*.nupkg
+          retention-days: 30
+
+  release:
+    runs-on: windows-2022
+    name: Create Release
+    needs: build
+    if: ${{ github.event.inputs.release == true }}
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          pattern: ${{ env.PLUGIN_NAME }}_*
+          merge-multiple: true
+
+      - name: Generate Release Note
+        shell: pwsh
+        run: |
+          $version = "${{ needs.build.outputs.version }}"
+          $changelogPath = "./changelog/${version}.md"
+          
+          $md5Summary = @"
+          
+          ## 文件校验
+          
+          > [!important]
+          > 下载后请校验文件 MD5 值，确保文件完整性。
+          
+          | 文件名 | MD5 |
+          |--------|-----|
+          "@
+          
+          $hashes = [ordered]@{}
+          
+          # 计算所有文件的 MD5
+          Get-ChildItem ./artifacts -File | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm MD5
+            $md5Summary += "`n| $($_.Name) | ``$($hash.Hash)`` |"
+            $hashes.Add($_.Name, $hash.Hash)
+          }
+          
+          # 添加隐藏元数据（供 ClassIsland 读取）
+          $json = ConvertTo-Json $hashes -Compress
+          $md5Summary += "`n`n<!-- CLASSISLAND_PKG_MD5 ${json} -->"
+          
+          # 读取或创建变更日志
+          if (Test-Path $changelogPath) {
+            $changelog = Get-Content $changelogPath -Raw
+          } else {
+            $changelog = "## 版本 ${version}`n`n- 更新内容详见提交历史"
+          }
+          
+          $fullContent = $changelog + "`n`n" + $md5Summary
+          $fullContent | Out-File -FilePath "./release-note.md" -Encoding utf8
+          
+          Write-Host "生成的发布说明："
+          Get-Content "./release-note.md"
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "./artifacts/*"
+          tag: v${{ needs.build.outputs.version }}
+          name: ${{ env.PLUGIN_NAME }} v${{ needs.build.outputs.version }}
+          bodyFile: ./release-note.md
+          draft: ${{ github.event.inputs.draft }}
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generateReleaseNotes: false
+
