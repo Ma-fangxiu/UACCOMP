@@ -25,7 +25,7 @@ on:
         default: true
 
 env:
-  PLUGIN_NAME: UACComp
+  PLUGIN_NAME: UACComp  # 插件名称（前缀）
 
 jobs:
   build:
@@ -47,7 +47,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Build & Publish
+      - name: Build & Package
         id: build-step
         shell: pwsh
         run: |
@@ -69,7 +69,7 @@ jobs:
           Write-Host "🔖 版本: $version" -ForegroundColor Cyan
           echo "version=$version" >> $env:GITHUB_OUTPUT
           
-          # 清理并创建输出目录
+          # 创建临时输出目录
           $OutputPath = "./output"
           if (Test-Path $OutputPath) {
             Remove-Item $OutputPath -Recurse -Force
@@ -86,66 +86,109 @@ jobs:
           dotnet build $csproj.FullName -c Release --no-restore
           if ($LASTEXITCODE -ne 0) { throw "构建失败" }
           
-          # 发布（生成 CIPX）
-          Write-Host "📤 发布项目..." -ForegroundColor Yellow
+          # 发布到临时目录
+          $PublishPath = "$OutputPath/publish"
+          Write-Host "📤 发布项目到 $PublishPath..." -ForegroundColor Yellow
           dotnet publish $csproj.FullName `
             -c Release `
             --no-build `
-            -p:CreateCipx=true `
-            -o $OutputPath
+            -o $PublishPath
           if ($LASTEXITCODE -ne 0) { throw "发布失败" }
           
-          # 显示结果
+          # 定义需要打包的文件列表（基于 PLUGIN_NAME）
+          $pluginName = "${{ env.PLUGIN_NAME }}"
+          $filesToPack = @(
+            "$PublishPath/$pluginName.pdb",
+            "$PublishPath/$pluginName.dll",
+            "$PublishPath/$pluginName.deps.json",
+            "$PublishPath/README.md",
+            "$PublishPath/manifest.yml",
+            "$PublishPath/icon.png"
+          )
+          
+          # 检查文件是否存在
           Write-Host ""
-          Write-Host "✅ 构建完成！产物列表：" -ForegroundColor Green
-          Get-ChildItem $OutputPath -Recurse | ForEach-Object {
-            $size = if ($_.Length -lt 1KB) { "$($_.Length) B" } 
-                    elseif ($_.Length -lt 1MB) { "{0:F2} KB" -f ($_.Length/1KB) }
-                    else { "{0:F2} MB" -f ($_.Length/1MB) }
-            Write-Host "   📎 $($_.Name) ($size)" -ForegroundColor Gray
+          Write-Host "📂 检查需要打包的文件：" -ForegroundColor Cyan
+          $existingFiles = @()
+          foreach ($file in $filesToPack) {
+            if (Test-Path $file) {
+              $item = Get-Item $file
+              $size = if ($item.Length -lt 1KB) { "$($item.Length) B" } 
+                      elseif ($item.Length -lt 1MB) { "{0:F2} KB" -f ($item.Length/1KB) }
+                      else { "{0:F2} MB" -f ($item.Length/1MB) }
+              Write-Host "   ✅ $(Split-Path $file -Leaf) ($size)" -ForegroundColor Green
+              $existingFiles += $file
+            } else {
+              Write-Host "   ❌ $(Split-Path $file -Leaf) - 不存在" -ForegroundColor Red
+            }
           }
+          
+          if ($existingFiles.Count -eq 0) {
+            throw "没有找到任何要打包的文件！"
+          }
+          
+          # 创建临时目录存放要打包的文件（保持根目录结构）
+          $PackTempPath = "$OutputPath/pack_temp"
+          New-Item -ItemType Directory -Path $PackTempPath -Force | Out-Null
+          
+          # 复制文件到临时目录
+          foreach ($file in $existingFiles) {
+            Copy-Item $file $PackTempPath/
+          }
+          
+          # 打包为 .cipx
+          Write-Host ""
+          Write-Host "📦 正在打包为 .cipx..." -ForegroundColor Yellow
+          $zipPath = "$OutputPath/$pluginName.zip"
+          $cipxPath = "$OutputPath/$pluginName.cipx"
+          
+          Compress-Archive -Path "$PackTempPath/*" -DestinationPath $zipPath -Force
+          Rename-Item $zipPath $cipxPath
+          
+          # 清理临时目录
+          Remove-Item $PublishPath -Recurse -Force
+          Remove-Item $PackTempPath -Recurse -Force
+          
+          # 显示结果
+          $cipxSize = (Get-Item $cipxPath).Length
+          $cipxSizeStr = if ($cipxSize -lt 1KB) { "$cipxSize B" } 
+                         elseif ($cipxSize -lt 1MB) { "{0:F2} KB" -f ($cipxSize/1KB) }
+                         else { "{0:F2} MB" -f ($cipxSize/1MB) }
+          Write-Host ""
+          Write-Host "✅ 打包完成：$pluginName.cipx ($cipxSizeStr)" -ForegroundColor Green
 
-      # 上传 CIPX 文件（必需）
-      - name: Upload CIPX Artifact
+      # 上传 CIPX 文件
+      - 名字: Upload CIPX Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PLUGIN_NAME }}_cipx
+          名字: ${{ env.PLUGIN_NAME }}_cipx
           path: ./output/*.cipx
           if-no-files-found: error
           retention-days: 30
 
-      # 上传 NuGet 包（可选）
-      - name: Upload NuPkg Artifact
-        uses: actions/upload-artifact@v4
-        if: ${{ hashFiles('./output/*.nupkg') != '' }}
-        with:
-          name: ${{ env.PLUGIN_NAME }}_nupkg
-          path: ./output/*.nupkg
-          retention-days: 7
-
   release:
     runs-on: windows-2022
-    name: Create Release
+    名字: Create Release
     needs: build
     if: ${{ github.event.inputs.release == true && github.event_name == 'workflow_dispatch' }}
     
     permissions:
-      contents: write
+      contents: 撰写
     
     steps:
-      - name: Checkout code
+      - 名字: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download Artifacts
+      - 名字: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
           pattern: ${{ env.PLUGIN_NAME }}_*
           merge-multiple: true
 
-      - name: Generate Release Note
+      - 名字: Generate Release Note
         shell: pwsh
         run: |
           $version = "${{ needs.build.outputs.version }}"
@@ -164,18 +207,15 @@ jobs:
           
           $hashes = [ordered]@{}
           
-          # 计算所有文件的 MD5
           Get-ChildItem ./artifacts -File | ForEach-Object {
             $hash = Get-FileHash $_.FullName -Algorithm MD5
             $md5Summary += "`n| $($_.Name) | ``$($hash.Hash)`` |"
             $hashes.Add($_.Name, $hash.Hash)
           }
           
-          # 添加隐藏元数据
           $json = ConvertTo-Json $hashes -Compress
           $md5Summary += "`n`n<!-- CLASSISLAND_PKG_MD5 ${json} -->"
           
-          # 读取或创建变更日志
           if (Test-Path $changelogPath) {
             $changelog = Get-Content $changelogPath -Raw
           } else {
@@ -188,14 +228,14 @@ jobs:
           Write-Host "生成的发布说明：" -ForegroundColor Gray
           Get-Content "./release-note.md"
 
-      - name: Create GitHub Release
+      - 名字: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "./artifacts/*"
           tag: v${{ needs.build.outputs.version }}
-          name: ${{ env.PLUGIN_NAME }} v${{ needs.build.outputs.version }}
+          名字: ${{ env.PLUGIN_NAME }} v${{ needs.build.outputs.version }}
           bodyFile: ./release-note.md
-          draft: ${{ github.event.inputs.draft }}
+          草案: ${{ github.event.inputs.draft }}
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
           generateReleaseNotes: false
