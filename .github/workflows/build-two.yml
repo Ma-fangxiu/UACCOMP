@@ -118,11 +118,16 @@ jobs:
             Copy-Item $file $PackTempPath/
           }
           
-          $zipPath = "$OutputPath/$pluginName.zip"
-          $cipxPath = "$OutputPath/$pluginName.cipx"
+          # 修复：使用绝对路径和正确的重命名方式
+          $zipPath = Join-Path (Resolve-Path $OutputPath) "$pluginName.zip"
+          $cipxPath = Join-Path (Resolve-Path $OutputPath) "$pluginName.cipx"
           
+          Write-Host "打包文件..."
           Compress-Archive -Path "$PackTempPath/*" -DestinationPath $zipPath -Force
-          Rename-Item $zipPath $cipxPath
+          
+          Write-Host "重命名为 .cipx..."
+          # 使用 Move-Item 代替 Rename-Item，并只指定新文件名
+          Move-Item -Path $zipPath -Destination $cipxPath -Force
           
           Remove-Item $PublishPath -Recurse -Force
           Remove-Item $PackTempPath -Recurse -Force
