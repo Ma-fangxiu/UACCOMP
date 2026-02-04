@@ -12,13 +12,13 @@ using Microsoft.Extensions.Hosting;
 namespace UACComp;
 
 [PluginEntrance]
-公共 class Plugin : PluginBase
+public class Plugin : PluginBase
 {
-    公共 Plugin()
+    public Plugin()
     {
     }
 
-    公共 override void Initialize(HostBuilderContext context, IServiceCollection services)
+    public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
         if (!IsRunningAsAdmin())
         {
@@ -26,18 +26,18 @@ namespace UACComp;
         }
     }
 
-    私有 bool IsRunningAsAdmin()
+    private bool IsRunningAsAdmin()
     {
         WindowsIdentity identity = WindowsIdentity.GetCurrent();
-        WindowsPrincipal principal = 新建 WindowsPrincipal(identity);
+        WindowsPrincipal principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    私有 void RestartAsAdmin()
+    private void RestartAsAdmin()
     {
         try
         {
-            var processStartInfo = 新建 ProcessStartInfo()
+            var processStartInfo = new ProcessStartInfo()
             {
                 FileName = Environment.ProcessPath?.Replace(".dll", ".exe"),
                 Verb = "runas",
