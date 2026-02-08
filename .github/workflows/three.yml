@@ -46,12 +46,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # 修复：使用 bash 读取 csproj，避免 PowerShell XML 解析问题
       - name: Get version from csproj
         id: get_version
         shell: bash
         run: |
-          # 查找 .csproj 文件
           CSPROJ=$(find . -name "*.csproj" -type f | head -1)
           if [ -z "$CSPROJ" ]; then
             echo "❌ 未找到 .csproj 文件"
@@ -59,15 +57,10 @@ jobs:
           fi
           echo "📄 找到项目文件: $CSPROJ"
           
-          # 使用 grep 提取版本号
           VERSION=$(grep -oP '<Version>\K[^<]+' "$CSPROJ" || echo "")
-          
-          # 如果没有 Version 标签，尝试从 AssemblyVersion 获取
           if [ -z "$VERSION" ]; then
             VERSION=$(grep -oP '<AssemblyVersion>\K[^<]+' "$CSPROJ" || echo "")
           fi
-          
-          # 如果还是没有，使用默认值
           if [ -z "$VERSION" ]; then
             VERSION="1.0.0.0"
             echo "⚠️ 未找到版本号，使用默认值: $VERSION"
@@ -75,7 +68,6 @@ jobs:
             echo "🔖 找到版本号: $VERSION"
           fi
           
-          # 确保是 4 位版本号
           PARTS=$(echo "$VERSION" | tr '.' '\n' | wc -l)
           while [ "$PARTS" -lt 4 ]; do
             VERSION="${VERSION}.0"
@@ -89,13 +81,11 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # 从标签获取
             TAG_NAME="${GITHUB_REF#refs/tags/}"
             echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
             echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
             echo "使用推送的标签: $TAG_NAME"
           else
-            # 手动计算新版本
             CURRENT="${{ steps.get_version.outputs.current_version }}"
             
             MAJOR=$(echo "$CURRENT" | cut -d. -f1)
@@ -164,14 +154,10 @@ jobs:
             echo "⚠️ 未找到 $CHANGELOG_PATH，自动生成"
             
             LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
-            COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges || echo "- 版本更新")
+            COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- 版本更新")
             
-            CONTENT="## 变更内容
-
-$COMMITS
-
----
-*此版本变更日志由action自动生成"
+            # 使用 printf 避免多行字符串问题
+            CONTENT=$(printf "## 变更内容\n\n%s\n\n---\n*此版本变更日志由action自动生成)
           fi
           
           # Base64 编码
@@ -221,7 +207,7 @@ $COMMITS
           dotnet build $csproj.FullName -c Release --no-restore
           
           $PublishPath = "$OutputPath/publish"
-          dotnet publish $csproj.FullName -c Release dotnet publish $csproj.FullName -c Release --no-build -o $PublishPath
+          dotnet publish $csproj.FullName -c Release --no-build -o $PublishPath
           
           $filesToPack = @(
             "$PublishPath/$pluginName.pdb",
@@ -290,25 +276,26 @@ $COMMITS
           if [ "$SIZE" -lt 1024 ]; then
             SIZE_STR="${SIZE} B"
           elif [ "$SIZE" -lt 1048576 ]; then
-            SIZE_STR=$(echo "scale=2; $SIZE/1024" | bc)
-            SIZE_STR="${SIZE_STR} KB"
+            SIZE_STR=$(awk "BEGIN {printf \"%.2f KB\", $SIZE/1024}")
           else
-            SIZE_STR=$(echo "scale=2; $SIZE/1048576" | bc)
-            SIZE_STR="${SIZE_STR} MB"
+            SIZE_STR=$(awk "BEGIN {printf \"%.2f MB\", $SIZE/1048576}")
           fi
           
-          # 读取变更日志
-          cat > release_body.txt << 'BODY_EOF'
-${{ needs.prepare.outputs.changelog }}
-
-## 文件信息
-
-| 文件名 | 大小 | MD5 |
-|--------|------|-----|
-| ${{ env.PLUGIN_NAME }}.${VERSION}.cipx | ${SIZE_STR} | `${MD5}` |
-
-<!-- CLASSISLAND_PKG_MD5 {"${{ env.PLUGIN_NAME }}.${VERSION}.cipx":"${MD5}"} -->
-BODY_EOF
+          # 读取变更日志内容
+          CHANGELOG="${{ needs.prepare.outputs.changelog }}"
+          
+          # 写入文件
+          {
+            echo "$CHANGELOG"
+            echo ""
+            echo "## 文件信息"
+            echo ""
+            echo "| 文件名 | 大小 | MD5 |"
+            echo "|--------|------|-----|"
+            echo "| ${{ env.PLUGIN_NAME }}.${VERSION}.cipx | ${SIZE_STR} | \`${MD5}\` |"
+            echo ""
+            echo "<!-- CLASSISLAND_PKG_MD5 {\"${{ env.PLUGIN_NAME }}.${VERSION}.cipx\":\"${MD5}\"} -->"
+          } > release_body.txt
           
           echo "body<<BODY_EOF" >> $GITHUB_OUTPUT
           cat release_body.txt >> $GITHUB_OUTPUT
