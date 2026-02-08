@@ -1,4 +1,4 @@
-name: Build and Release
+name: Release
 
 on:
   # 推送标签时自动触发
