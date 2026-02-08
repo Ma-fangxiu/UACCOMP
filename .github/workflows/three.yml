@@ -143,7 +143,7 @@ jobs:
           $commits
           
           ---
-          *此版本变更日志自动生成，如需自定义请创建文件: changelog/${version}.md*
+          *此版本变更日志由action自动生成*
           "@
           }
           
