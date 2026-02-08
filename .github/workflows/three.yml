@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - '*'
-  
+
   workflow_dispatch:
     inputs:
       version_type:
@@ -37,7 +37,7 @@ jobs:
       tag_name: ${{ steps.get_tag.outputs.tag_name }}
       version: ${{ steps.get_tag.outputs.version }}
       is_prerelease: ${{ steps.release_type.outputs.is_prerelease }}
-      changelog: ${{ steps.read_changelog.outputs.changelog }}
+      changelog: ${{ steps.decode_changelog.outputs.changelog }}
 
     steps:
       - name: Checkout code
@@ -46,63 +46,40 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      # ========== 从 .csproj 读取当前版本 ==========
       - name: Get version from csproj
         id: get_version
         shell: pwsh
         run: |
-          # 查找 .csproj 文件
           $csproj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
           if (-not $csproj) {
-            Write-Error "❌ 未找到 .csproj 文件"
+            Write-Error "未找到 .csproj 文件"
             exit 1
           }
           
-          Write-Host "📄 找到项目文件: $($csproj.FullName)" -ForegroundColor Cyan
-          
-          # 解析 XML 读取版本号
           [xml]$proj = Get-Content $csproj.FullName -Encoding UTF8
           $version = $proj.Project.PropertyGroup.Version
           
-          # 如果版本号为空，使用默认值
           if (-not $version) {
-            Write-Host "⚠️ 未找到 <Version> 标签，使用默认值 1.0.0.0" -ForegroundColor Yellow
             $version = "1.0.0.0"
           }
           
-          # 确保是 4 位版本号
           $parts = $version.Split('.')
           while ($parts.Length -lt 4) {
             $version += ".0"
             $parts += "0"
           }
           
-          Write-Host "🔖 当前版本: $version" -ForegroundColor Green
           echo "current_version=$version" >> $env:GITHUB_OUTPUT
-          echo "csproj_path=$($csproj.FullName)" >> $env:GITHUB_OUTPUT
 
-      # ========== 计算新版本号 ==========
       - name: Calculate new version
         id: get_tag
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "push") {
-            # 推送标签：使用标签名，但验证与 csproj 是否一致
             $tagName = "${{ github.ref }}".Replace("refs/tags/", "")
-            $csprojVersion = "${{ steps.get_version.outputs.current_version }}"
-            
-            Write-Host "推送的标签: $tagName" -ForegroundColor Cyan
-            Write-Host "csproj 版本: $csprojVersion" -ForegroundColor Cyan
-            
-            # 可选：警告版本不一致
-            if ($tagName -ne $csprojVersion) {
-              Write-Host "⚠️ 警告: 标签版本 ($tagName) 与 csproj 版本 ($csprojVersion) 不一致" -ForegroundColor Yellow
-            }
-            
             echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
             echo "version=$tagName" >> $env:GITHUB_OUTPUT
           } else {
-            # 手动触发：自动计算新版本
             $current = "${{ steps.get_version.outputs.current_version }}"
             $parts = $current.Split('.')
             
@@ -111,9 +88,7 @@ jobs:
             $patch = [int]$parts[2]
             $build = [int]$parts[3]
             
-            $versionType = "${{ github.event.inputs.version_type }}"
-            
-            switch ($versionType) {
+            switch ("${{ github.event.inputs.version_type }}") {
               "major" { 
                 $major++; $minor = 0; $patch = 0; $build = 0
               }
@@ -130,9 +105,6 @@ jobs:
             
             $newVersion = "$major.$minor.$patch.$build"
             
-            Write-Host "版本类型: $versionType" -ForegroundColor Cyan
-            Write-Host "新版本: $newVersion" -ForegroundColor Green
-            
             echo "tag_name=$newVersion" >> $env:GITHUB_OUTPUT
             echo "version=$newVersion" >> $env:GITHUB_OUTPUT
           }
@@ -145,12 +117,10 @@ jobs:
             $build = [int]("${{ steps.get_tag.outputs.version }}".Split('.')[3])
             $isPrerelease = ($build -ne 0)
             echo "is_prerelease=$isPrerelease" >> $env:GITHUB_OUTPUT
-            Write-Host "预发布: $isPrerelease (build=$build)" -ForegroundColor $(if($isPrerelease){"Yellow"}else{"Green"})
           } else {
             echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $env:GITHUB_OUTPUT
           }
 
-      # ========== 读取变更日志 ==========
       - name: Read changelog
         id: read_changelog
         shell: pwsh
@@ -160,10 +130,7 @@ jobs:
           
           if (Test-Path $changelogPath) {
             $content = Get-Content $changelogPath -Raw -Encoding UTF8
-            Write-Host "✅ 使用手动变更日志: $changelogPath" -ForegroundColor Green
           } else {
-            Write-Host "⚠️ 未找到 $changelogPath，自动生成" -ForegroundColor Yellow
-            
             $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
             if (-not $lastTag) { $lastTag = git rev-list --max-parents=0 HEAD }
             
@@ -176,22 +143,31 @@ jobs:
           $commits
           
           ---
-          *此版本变更日志自动生成，如需自定义请创建文件: \`changelog/${version}.md\`*
+          *此版本变更日志由action自动生成*
           "@
           }
           
-          # Base64 编码处理多行内容
+          # 使用 Base64 编码避免特殊字符问题
           $bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
           $base64 = [Convert]::ToBase64String($bytes)
           echo "changelog_b64=$base64" >> $env:GITHUB_OUTPUT
 
+      # 修复：使用 pwsh 而不是 bash 解码，避免换行符问题
       - name: Decode changelog for output
         id: decode_changelog
-        shell: bash
+        shell: pwsh
         run: |
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ steps.read_changelog.outputs.changelog_b64 }}" | base64 -d >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          $base64 = "${{ steps.read_changelog.outputs.changelog_b64 }}"
+          $bytes = [Convert]::FromBase64String($base64)
+          $content = [System.Text.Encoding]::UTF8.GetString($bytes)
+          
+          # 写入文件而不是直接输出到 GITHUB_OUTPUT
+          $content | Out-File -FilePath "changelog_output.txt" -Encoding UTF8
+          
+          # 使用特殊分隔符输出多行内容
+          echo "changelog<<CHANGELOG_EOF" >> $env:GITHUB_OUTPUT
+          Get-Content "changelog_output.txt" >> $env:GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $env:GITHUB_OUTPUT
 
   build:
     needs: prepare
@@ -216,38 +192,21 @@ jobs:
           $pluginName = "${{ env.PLUGIN_NAME }}"
           $version = "${{ needs.prepare.outputs.version }}"
           
-          # 查找项目文件
           $csproj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
-          if (-not $csproj) { 
-            Write-Error "❌ 未找到 .csproj 文件"
-            exit 1 
-          }
+          if (-not $csproj) { throw "未找到 .csproj 文件" }
           
-          Write-Host "📄 项目: $($csproj.FullName)" -ForegroundColor Cyan
-          Write-Host "🔖 版本: $version" -ForegroundColor Cyan
-          
-          # 创建输出目录
           $OutputPath = "./output"
           if (Test-Path $OutputPath) { 
             Remove-Item $OutputPath -Recurse -Force 
           }
           New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
           
-          # 还原、构建、发布
-          Write-Host "📦 还原 NuGet 包..." -ForegroundColor Yellow
           dotnet restore $csproj.FullName
-          if ($LASTEXITCODE -ne 0) { throw "❌ 还原失败" }
-          
-          Write-Host "🔨 编译项目..." -ForegroundColor Yellow
           dotnet build $csproj.FullName -c Release --no-restore
-          if ($LASTEXITCODE -ne 0) { throw "❌ 构建失败" }
           
           $PublishPath = "$OutputPath/publish"
-          Write-Host "📤 发布项目..." -ForegroundColor Yellow
           dotnet publish $csproj.FullName -c Release --no-build -o $PublishPath
-          if ($LASTEXITCODE -ne 0) { throw "❌ 发布失败" }
           
-          # 打包指定文件
           $filesToPack = @(
             "$PublishPath/$pluginName.pdb",
             "$PublishPath/$pluginName.dll",
@@ -260,32 +219,17 @@ jobs:
           $PackTemp = "$OutputPath/pack_temp"
           New-Item -ItemType Directory -Path $PackTemp -Force | Out-Null
           
-          $packedFiles = 0
           foreach ($file in $filesToPack) {
-            if (Test-Path $file) {
-              Copy-Item $file $PackTemp/
-              $packedFiles++
-              Write-Host "  ✅ $(Split-Path $file -Leaf)" -ForegroundColor Gray
-            } else {
-              Write-Host "  ⚠️ 跳过: $(Split-Path $file -Leaf)" -ForegroundColor DarkGray
+            if (Test-Path $file) { 
+              Copy-Item $file $PackTemp/ 
             }
           }
           
-          Write-Host "已打包 $packedFiles 个文件" -ForegroundColor Green
-          
-          # 创建 CIPX
           $cipxName = "$pluginName.$version.cipx"
-          $zipPath = "$OutputPath/$pluginName.zip"
-          $cipxPath = "$OutputPath/$cipxName"
+          Compress-Archive -Path "$PackTemp/*" -DestinationPath "$OutputPath/$pluginName.zip" -Force
+          Move-Item "$OutputPath/$pluginName.zip" "$OutputPath/$cipxName" -Force
           
-          Compress-Archive -Path "$PackTemp/*" -DestinationPath $zipPath -Force
-          Move-Item -Path $zipPath -Destination $cipxPath -Force
-          
-          # 清理
           Remove-Item $PublishPath, $PackTemp -Recurse -Force
-          
-          Write-Host ""
-          Write-Host "✅ 打包完成: $cipxName" -ForegroundColor Green
           
           echo "cipx_name=$cipxName" >> $env:GITHUB_OUTPUT
 
@@ -299,50 +243,14 @@ jobs:
           $size = (Get-Item $cipxPath).Length
           $md5 = (Get-FileHash $cipxPath -Algorithm MD5).Hash
           
-          $sizeStr = if ($size -lt 1KB) { "$size B" }
-                    elseif ($size -lt 1MB) { "{0:F2} KB" -f ($size/1KB) }
-                    else { "{0:F2} MB" -f ($size/1MB) }
-          
           echo "cipx_size=$size" >> $env:GITHUB_OUTPUT
           echo "cipx_md5=$md5" >> $env:GITHUB_OUTPUT
-          
-          Write-Host "📊 文件大小: $sizeStr" -ForegroundColor Cyan
-          Write-Host "🔐 MD5: $md5" -ForegroundColor Cyan
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PLUGIN_NAME }}-${{ needs.prepare.outputs.version }}
           path: ./output/*.cipx
-
-      - name: Create Build Summary
-        if: always()
-        shell: pwsh
-        run: |
-          $version = "${{ needs.prepare.outputs.version }}"
-          $cipxName = "${{ steps.build_package.outputs.cipx_name }}"
-          $size = [int]"${{ steps.calculate_size.outputs.cipx_size }}"
-          
-          $sizeStr = if ($size -lt 1KB) { "$size B" }
-                    elseif ($size -lt 1MB) { "{0:F2} KB" -f ($size/1KB) }
-                    else { "{0:F2} MB" -f ($size/1MB) }
-          
-          echo "# Build Summary" >> $env:GITHUB_STEP_SUMMARY
-          echo "" >> $env:GITHUB_STEP_SUMMARY
-          
-          if (Test-Path "./output/$cipxName") {
-            echo "## ✅ Build Successful" >> $env:GITHUB_STEP_SUMMARY
-            echo "" >> $env:GITHUB_STEP_SUMMARY
-            echo "| 项目 | 值 |" >> $env:GITHUB_STEP_SUMMARY
-            echo "|------|-----|" >> $env:GITHUB_STEP_SUMMARY
-            echo "| **Plugin** | ${{ env.PLUGIN_NAME }} |" >> $env:GITHUB_STEP_SUMMARY
-            echo "| **Version** | $version |" >> $env:GITHUB_STEP_SUMMARY
-            echo "| **File** | $cipxName |" >> $env:GITHUB_STEP_SUMMARY
-            echo "| **Size** | $sizeStr |" >> $env:GITHUB_STEP_SUMMARY
-            echo "| **MD5** | \`${{ steps.calculate_size.outputs.cipx_md5 }}\` |" >> $env:GITHUB_STEP_SUMMARY
-          } else {
-            echo "## ❌ Build Failed" >> $env:GITHUB_STEP_SUMMARY
-          }
 
   release:
     needs: [prepare, build]
@@ -356,6 +264,7 @@ jobs:
         with:
           name: ${{ env.PLUGIN_NAME }}-${{ needs.prepare.outputs.version }}
 
+      # 修复：使用 pwsh 处理多行内容
       - name: Create Release Body
         id: create_body
         shell: pwsh
@@ -373,7 +282,7 @@ jobs:
           $body = @"
           $changelog
           
-          ## 📦 文件信息
+          ## 文件信息
           
           | 文件名 | 大小 | MD5 |
           |--------|------|-----|
@@ -382,24 +291,20 @@ jobs:
           <!-- CLASSISLAND_PKG_MD5 {"${{ env.PLUGIN_NAME }}.$version.cipx":"${{ needs.build.outputs.cipx_md5 }}"} -->
           "@
           
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          $base64 = [Convert]::ToBase64String($bytes)
-          echo "body_b64=$base64" >> $env:GITHUB_OUTPUT
-
-      - name: Decode body
-        id: decode_body
-        shell: bash
-        run: |
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ steps.create_body.outputs.body_b64 }}" | base64 -d >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # 写入文件
+          $body | Out-File -FilePath "release_body.txt" -Encoding UTF8
+          
+          # 输出到 GITHUB_OUTPUT
+          echo "body<<BODY_EOF" >> $env:GITHUB_OUTPUT
+          Get-Content "release_body.txt" >> $env:GITHUB_OUTPUT
+          echo "BODY_EOF" >> $env:GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag_name }}
           name: ${{ env.PLUGIN_NAME }} ${{ needs.prepare.outputs.version }}
-          body: ${{ steps.decode_body.outputs.body }}
+          body: ${{ steps.create_body.outputs.body }}
           draft: false
           prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
           files: '*.cipx'
