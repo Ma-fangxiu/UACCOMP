@@ -158,9 +158,7 @@ jobs:
             COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- 版本更新")
             
             # 修复：简化格式，只有一个 "## 变更内容"，删除重复的提示
-            CONTENT="$COMMITS
-            
-*日志由action自动生成*"
+            CONTENT=$(printf "%s\n\n*日志由action自动生成*" "$COMMITS")
           fi
           
           CONTENT_B64=$(echo "$CONTENT" | base64 -w 0)
