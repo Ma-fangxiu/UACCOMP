@@ -10,9 +10,10 @@ on:
       version_type:
         description: '版本类型'
         required: true
-        default: 'patch'
+        default: 'none'
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
@@ -59,13 +60,7 @@ jobs:
           
           VERSION=$(grep -oP '<Version>\K[^<]+' "$CSPROJ" || echo "")
           if [ -z "$VERSION" ]; then
-            VERSION=$(grep -oP '<AssemblyVersion>\K[^<]+' "$CSPROJ" || echo "")
-          fi
-          if [ -z "$VERSION" ]; then
             VERSION="1.0.0.0"
-            echo "⚠️ 未找到版本号，使用默认值: $VERSION"
-          else
-            echo "🔖 找到版本号: $VERSION"
           fi
           
           PARTS=$(echo "$VERSION" | tr '.' '\n' | wc -l)
@@ -74,6 +69,7 @@ jobs:
             PARTS=$((PARTS + 1))
           done
           
+          echo "🔖 csproj 版本: $VERSION"
           echo "current_version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Calculate new version
@@ -87,39 +83,44 @@ jobs:
             echo "使用推送的标签: $TAG_NAME"
           else
             CURRENT="${{ steps.get_version.outputs.current_version }}"
-            
-            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-            MINOR=$(echo "$CURRENT" | cut -d. -f2)
-            PATCH=$(echo "$CURRENT" | cut -d. -f3)
-            BUILD=$(echo "$CURRENT" | cut -d. -f4)
-            
             VERSION_TYPE="${{ github.event.inputs.version_type }}"
             
-            case "$VERSION_TYPE" in
-              major)
-                MAJOR=$((MAJOR + 1))
-                MINOR=0
-                PATCH=0
-                BUILD=0
-                ;;
-              minor)
-                MINOR=$((MINOR + 1))
-                PATCH=0
-                BUILD=0
-                ;;
-              patch)
-                PATCH=$((PATCH + 1))
-                BUILD=0
-                ;;
-              build)
-                BUILD=$((BUILD + 1))
-                ;;
-            esac
+            if [ "$VERSION_TYPE" = "none" ]; then
+              NEW_VERSION="$CURRENT"
+              echo "使用 csproj 版本（无修改）: $NEW_VERSION"
+            else
+              MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+              MINOR=$(echo "$CURRENT" | cut -d. -f2)
+              PATCH=$(echo "$CURRENT" | cut -d. -f3)
+              BUILD=$(echo "$CURRENT" | cut -d. -f4)
+              
+              case "$VERSION_TYPE" in
+                major)
+                  MAJOR=$((MAJOR + 1))
+                  MINOR=0
+                  PATCH=0
+                  BUILD=0
+                  ;;
+                minor)
+                  MINOR=$((MINOR + 1))
+                  PATCH=0
+                  BUILD=0
+                  ;;
+                patch)
+                  PATCH=$((PATCH + 1))
+                  BUILD=0
+                  ;;
+                build)
+                  BUILD=$((BUILD + 1))
+                  ;;
+              esac
+              
+              NEW_VERSION="$MAJOR.$MINOR.$PATCH.$BUILD"
+            fi
             
-            NEW_VERSION="$MAJOR.$MINOR.$PATCH.$BUILD"
             echo "tag_name=$NEW_VERSION" >> $GITHUB_OUTPUT
             echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
-            echo "新版本: $NEW_VERSION"
+            echo "最终版本: $NEW_VERSION"
           fi
 
       - name: Determine release type
@@ -131,10 +132,8 @@ jobs:
             BUILD=$(echo "$VERSION" | cut -d. -f4)
             if [ "$BUILD" = "0" ]; then
               echo "is_prerelease=false" >> $GITHUB_OUTPUT
-              echo "这是正式版本"
             else
               echo "is_prerelease=true" >> $GITHUB_OUTPUT
-              echo "这是预发布版本"
             fi
           else
             echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $GITHUB_OUTPUT
@@ -148,19 +147,22 @@ jobs:
           CHANGELOG_PATH="./changelog/${VERSION}.md"
           
           if [ -f "$CHANGELOG_PATH" ]; then
+            # 使用手动编写的变更日志
             CONTENT=$(cat "$CHANGELOG_PATH")
             echo "✅ 使用手动变更日志: $CHANGELOG_PATH"
           else
+            # 自动生成变更日志
             echo "⚠️ 未找到 $CHANGELOG_PATH，自动生成"
             
             LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
             COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- 版本更新")
             
-            # 使用 printf 避免多行字符串问题
-            CONTENT=$(printf "## 变更内容\n\n%s\n\n---\n*此版本变更日志由action自动生成" "$COMMITS" "$VERSION")
+            # 修复：简化格式，只有一个 "## 变更内容"，删除重复的提示
+            CONTENT="$COMMITS
+            
+*日志由action自动生成*"
           fi
           
-          # Base64 编码
           CONTENT_B64=$(echo "$CONTENT" | base64 -w 0)
           echo "changelog_b64=$CONTENT_B64" >> $GITHUB_OUTPUT
 
@@ -272,7 +274,6 @@ jobs:
           SIZE="${{ needs.build.outputs.cipx_size }}"
           MD5="${{ needs.build.outputs.cipx_md5 }}"
           
-          # 计算可读大小
           if [ "$SIZE" -lt 1024 ]; then
             SIZE_STR="${SIZE} B"
           elif [ "$SIZE" -lt 1048576 ]; then
@@ -281,11 +282,12 @@ jobs:
             SIZE_STR=$(awk "BEGIN {printf \"%.2f MB\", $SIZE/1048576}")
           fi
           
-          # 读取变更日志内容
           CHANGELOG="${{ needs.prepare.outputs.changelog }}"
           
-          # 写入文件
+          # 修复：只在手动生成时添加 "## 变更内容" 标题
           {
+            echo "## 变更内容"
+            echo ""
             echo "$CHANGELOG"
             echo ""
             echo "## 文件信息"
