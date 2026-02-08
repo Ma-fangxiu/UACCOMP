@@ -157,7 +157,7 @@ jobs:
             COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- 版本更新")
             
             # 使用 printf 避免多行字符串问题
-            CONTENT=$(printf "## 变更内容\n\n%s\n\n---\n*此版本变更日志由action自动生成)
+            CONTENT=$(printf "## 变更内容\n\n%s\n\n---\n*此版本变更日志由action自动生成" "$COMMITS" "$VERSION")
           fi
           
           # Base64 编码
