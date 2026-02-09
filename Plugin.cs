@@ -1,7 +1,5 @@
 using System;
-using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Security.Principal;
 using ClassIsland.Core;
@@ -9,138 +7,133 @@ using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace UACComp;
 
 [PluginEntrance]
 public class Plugin : PluginBase
 {
-    private ILogger<Plugin>? _logger;
-    private const string UacMarkerArg = "-m";
-
     public Plugin()
     {
+        // 无参构造函数
     }
+    
+    private const string RestartFlag = "--uac-restarted";
 
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
-        var args = Environment.GetCommandLineArgs();
-        bool isRestarted = args.Contains(UacMarkerArg);
-        
-        try
+        // 检查是否已经重启过（防止无限循环）
+        if (IsRestarted())
         {
-            _logger = LoggerFactory.Create(builder => 
-            {
-                builder.AddConsole();
-                builder.SetMinimumLevel(LogLevel.Information);
-            }).CreateLogger<Plugin>();
-        }
-        catch { }
-
-        if (isRestarted)
-        {
-            _logger?.LogInformation("UACComp: 检测到提权标记，当前已是管理员权限进程");
             return;
         }
 
-        _logger?.LogInformation("UACComp: 开始检查管理员权限...");
-
-        try
+        // 检查是否以管理员权限运行
+        if (!IsRunningAsAdmin())
         {
-            if (!IsRunningAsAdmin())
-            {
-                _logger?.LogWarning("UACComp: 当前非管理员权限，准备请求提升...");
-                RestartAsAdmin(args);
-                _logger?.LogInformation("UACComp: 正在终止当前非管理员进程...");
-                Environment.Exit(0);
-            }
-            else
-            {
-                _logger?.LogInformation("UACComp: 当前已是管理员权限，无需操作");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "UACComp: 权限提升过程发生错误");
+            RestartAsAdmin();
         }
     }
 
+    /// <summary>
+    /// 检查是否已经重启过
+    /// </summary>
+    private bool IsRestarted()
+    {
+        return Environment.GetCommandLineArgs().Contains(RestartFlag);
+    }
+
+    /// <summary>
+    /// 检查当前进程是否以管理员权限运行
+    /// </summary>
     private bool IsRunningAsAdmin()
     {
-        _logger?.LogDebug("UACComp: 正在检查权限...");
-        
         try
         {
-            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
             WindowsPrincipal principal = new WindowsPrincipal(identity);
-            bool isAdmin = principal.IsInRole(WindowsBuiltInRole.Administrator);
-            
-            _logger?.LogDebug("UACComp: 权限检查 - 用户: {User}, 管理员: {IsAdmin}", 
-                identity.Name, isAdmin);
-            
-            return isAdmin;
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
         }
-        catch (Exception ex)
+        catch
         {
-            _logger?.LogError(ex, "UACComp: 检查权限时发生异常");
             return false;
         }
     }
 
-    private void RestartAsAdmin(string[] currentArgs)
+    /// <summary>
+    /// 获取可执行文件路径
+    /// </summary>
+    private string GetExecutablePath()
     {
-        string? currentPath = Environment.ProcessPath;
+        // 参考 StartUpAsAdmin 的实现，使用 Environment.ProcessPath 并替换 .dll 为 .exe
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(processPath))
+        {
+            // 如果无法获取进程路径，尝试使用 AppBase.ExecutingEntrance
+            return AppBase.ExecutingEntrance;
+        }
         
-        if (string.IsNullOrWhiteSpace(currentPath))
+        // 简单直接地替换 .dll 为 .exe，与 StartUpAsAdmin 保持一致
+        if (processPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
         {
-            _logger?.LogError("UACComp: 无法获取当前进程路径");
-            return;
+            return processPath.Replace(".dll", ".exe");
         }
-
-        string targetPath = currentPath.Replace(".dll", ".exe");
         
-        if (!File.Exists(targetPath))
-        {
-            _logger?.LogError("UACComp: 目标文件不存在: {Path}", targetPath);
-            return;
-        }
+        // 如果不是 .dll 文件，直接返回原路径
+        return processPath;
+    }
 
-        var startInfo = new ProcessStartInfo()
-        {
-            FileName = targetPath,
-            Verb = "runas",
-            UseShellExecute = true
-        };
-
-        startInfo.ArgumentList.Add(UacMarkerArg);
-
-        for (int i = 1; i < currentArgs.Length; i++)
-        {
-            if (currentArgs[i] != UacMarkerArg)
-            {
-                startInfo.ArgumentList.Add(currentArgs[i]);
-            }
-        }
-
+    /// <summary>
+    /// 以管理员权限重启应用
+    /// </summary>
+    private void RestartAsAdmin()
+    {
         try
         {
-            _logger?.LogInformation("UACComp: 正在启动管理员权限进程: {Path}", targetPath);
-            var process = Process.Start(startInfo);
+            // 获取当前命令行参数
+            var currentArgs = Environment.GetCommandLineArgs().ToList();
             
+            // 移除程序路径（第一个参数）
+            if (currentArgs.Count > 0)
+            {
+                currentArgs.RemoveAt(0);
+            }
+
+            // 移除旧的重启标记（防止重复）
+            currentArgs.RemoveAll(arg => arg == RestartFlag);
+
+            // 添加重启标记
+            currentArgs.Add(RestartFlag);
+
+            // 使用更可靠的路径获取方式，参考 StartUpAsAdmin
+            var appPath = GetExecutablePath();
+
+            var processStartInfo = new ProcessStartInfo()
+            {
+                FileName = appPath,
+                Verb = "runas",  // 请求提升权限
+                UseShellExecute = true
+            };
+
+            // 添加参数
+            foreach (var arg in currentArgs)
+            {
+                processStartInfo.ArgumentList.Add(arg);
+            }
+
+            // 启动新进程
+            var process = Process.Start(processStartInfo);
+            
+            // 如果启动成功，停止当前应用
             if (process != null)
             {
-                _logger?.LogInformation("UACComp: 新进程已启动，PID: {Pid}", process.Id);
+                AppBase.Current?.Stop();
             }
-        }
-        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
-        {
-            _logger?.LogWarning("UACComp: 用户拒绝了UAC权限提升");
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "UACComp: 启动管理员进程失败");
-            throw;
+            // 记录错误，但不影响应用启动
+            Debug.WriteLine($"UAC 提权失败: {ex.Message}");
         }
     }
 }
