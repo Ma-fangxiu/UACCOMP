@@ -10,9 +10,10 @@ on:
       version_type:
         description: '版本类型'
         required: true
-        default: 'patch'
+        default: 'none'
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
@@ -48,126 +49,129 @@ jobs:
 
       - name: Get version from csproj
         id: get_version
-        shell: pwsh
+        shell: bash
         run: |
-          $csproj = Get-ChildItem -Path . -Filter "*.csproj" -Recurse | Select-Object -First 1
-          if (-not $csproj) {
-            Write-Error "未找到 .csproj 文件"
+          CSPROJ=$(find . -name "*.csproj" -type f | head -1)
+          if [ -z "$CSPROJ" ]; then
+            echo "❌ 未找到 .csproj 文件"
             exit 1
-          }
+          fi
+          echo "📄 找到项目文件: $CSPROJ"
           
-          [xml]$proj = Get-Content $csproj.FullName -Encoding UTF8
-          $version = $proj.Project.PropertyGroup.Version
+          VERSION=$(grep -oP '<Version>\K[^<]+' "$CSPROJ" || echo "")
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.0.0"
+          fi
           
-          if (-not $version) {
-            $version = "1.0.0.0"
-          }
+          PARTS=$(echo "$VERSION" | tr '.' '\n' | wc -l)
+          while [ "$PARTS" -lt 4 ]; do
+            VERSION="${VERSION}.0"
+            PARTS=$((PARTS + 1))
+          done
           
-          $parts = $version.Split('.')
-          while ($parts.Length -lt 4) {
-            $version += ".0"
-            $parts += "0"
-          }
-          
-          echo "current_version=$version" >> $env:GITHUB_OUTPUT
+          echo "🔖 csproj 版本: $VERSION"
+          echo "current_version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Calculate new version
         id: get_tag
-        shell: pwsh
+        shell: bash
         run: |
-          if ("${{ github.event_name }}" -eq "push") {
-            $tagName = "${{ github.ref }}".Replace("refs/tags/", "")
-            echo "tag_name=$tagName" >> $env:GITHUB_OUTPUT
-            echo "version=$tagName" >> $env:GITHUB_OUTPUT
-          } else {
-            $current = "${{ steps.get_version.outputs.current_version }}"
-            $parts = $current.Split('.')
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "version=$TAG_NAME" >> $GITHUB_OUTPUT
+            echo "使用推送的标签: $TAG_NAME"
+          else
+            CURRENT="${{ steps.get_version.outputs.current_version }}"
+            VERSION_TYPE="${{ github.event.inputs.version_type }}"
             
-            $major = [int]$parts[0]
-            $minor = [int]$parts[1]
-            $patch = [int]$parts[2]
-            $build = [int]$parts[3]
+            if [ "$VERSION_TYPE" = "none" ]; then
+              NEW_VERSION="$CURRENT"
+              echo "使用 csproj 版本（无修改）: $NEW_VERSION"
+            else
+              MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+              MINOR=$(echo "$CURRENT" | cut -d. -f2)
+              PATCH=$(echo "$CURRENT" | cut -d. -f3)
+              BUILD=$(echo "$CURRENT" | cut -d. -f4)
+              
+              case "$VERSION_TYPE" in
+                major)
+                  MAJOR=$((MAJOR + 1))
+                  MINOR=0
+                  PATCH=0
+                  BUILD=0
+                  ;;
+                minor)
+                  MINOR=$((MINOR + 1))
+                  PATCH=0
+                  BUILD=0
+                  ;;
+                patch)
+                  PATCH=$((PATCH + 1))
+                  BUILD=0
+                  ;;
+                build)
+                  BUILD=$((BUILD + 1))
+                  ;;
+              esac
+              
+              NEW_VERSION="$MAJOR.$MINOR.$PATCH.$BUILD"
+            fi
             
-            switch ("${{ github.event.inputs.version_type }}") {
-              "major" { 
-                $major++; $minor = 0; $patch = 0; $build = 0
-              }
-              "minor" { 
-                $minor++; $patch = 0; $build = 0
-              }
-              "patch" { 
-                $patch++; $build = 0
-              }
-              "build" { 
-                $build++
-              }
-            }
-            
-            $newVersion = "$major.$minor.$patch.$build"
-            
-            echo "tag_name=$newVersion" >> $env:GITHUB_OUTPUT
-            echo "version=$newVersion" >> $env:GITHUB_OUTPUT
-          }
+            echo "tag_name=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "最终版本: $NEW_VERSION"
+          fi
 
       - name: Determine release type
         id: release_type
-        shell: pwsh
+        shell: bash
         run: |
-          if ("${{ github.event_name }}" -eq "push") {
-            $build = [int]("${{ steps.get_tag.outputs.version }}".Split('.')[3])
-            $isPrerelease = ($build -ne 0)
-            echo "is_prerelease=$isPrerelease" >> $env:GITHUB_OUTPUT
-          } else {
-            echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $env:GITHUB_OUTPUT
-          }
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${{ steps.get_tag.outputs.version }}"
+            BUILD=$(echo "$VERSION" | cut -d. -f4)
+            if [ "$BUILD" = "0" ]; then
+              echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            else
+              echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "is_prerelease=${{ github.event.inputs.prerelease }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Read changelog
         id: read_changelog
-        shell: pwsh
+        shell: bash
         run: |
-          $version = "${{ steps.get_tag.outputs.version }}"
-          $changelogPath = "./changelog/${version}.md"
+          VERSION="${{ steps.get_tag.outputs.version }}"
+          CHANGELOG_PATH="./changelog/${VERSION}.md"
           
-          if (Test-Path $changelogPath) {
-            $content = Get-Content $changelogPath -Raw -Encoding UTF8
-          } else {
-            $lastTag = git describe --tags --abbrev=0 HEAD~1 2>$null
-            if (-not $lastTag) { $lastTag = git rev-list --max-parents=0 HEAD }
+          if [ -f "$CHANGELOG_PATH" ]; then
+            # 使用手动编写的变更日志
+            CONTENT=$(cat "$CHANGELOG_PATH")
+            echo "✅ 使用手动变更日志: $CHANGELOG_PATH"
+          else
+            # 自动生成变更日志
+            echo "⚠️ 未找到 $CHANGELOG_PATH，自动生成"
             
-            $commits = git log "$lastTag..HEAD" --pretty=format:"- %s (%h)" --no-merges
-            if (-not $commits) { $commits = "- 版本更新" }
+            LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)
+            COMMITS=$(git log "$LAST_TAG..HEAD" --pretty=format:"- %s (%h)" --no-merges 2>/dev/null || echo "- 版本更新")
             
-            $content = @"
-          ## 变更内容
+            # 修复：简化格式，只有一个 "## 变更内容"，删除重复的提示
+            CONTENT=$(printf "%s\n\n*日志由action自动生成*" "$COMMITS")
+          fi
           
-          $commits
-          
-          ---
-          *此版本变更日志由action自动生成*
-          "@
-          }
-          
-          # 使用 Base64 编码避免特殊字符问题
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
-          $base64 = [Convert]::ToBase64String($bytes)
-          echo "changelog_b64=$base64" >> $env:GITHUB_OUTPUT
+          CONTENT_B64=$(echo "$CONTENT" | base64 -w 0)
+          echo "changelog_b64=$CONTENT_B64" >> $GITHUB_OUTPUT
 
-      # 修复：使用 pwsh 而不是 bash 解码，避免换行符问题
-      - name: Decode changelog for output
+      - name: Decode changelog
         id: decode_changelog
-        shell: pwsh
+        shell: bash
         run: |
-          $base64 = "${{ steps.read_changelog.outputs.changelog_b64 }}"
-          $bytes = [Convert]::FromBase64String($base64)
-          $content = [System.Text.Encoding]::UTF8.GetString($bytes)
-          
-          # 写入文件而不是直接输出到 GITHUB_OUTPUT
-          $content | Out-File -FilePath "changelog_output.txt" -Encoding UTF8
-          
-          # 使用特殊分隔符输出多行内容
-          echo "changelog<<CHANGELOG_EOF" >> $env:GITHUB_OUTPUT
-          Get-Content "changelog_output.txt" >> $env:GITHUB_OUTPUT
-          echo "CHANGELOG_EOF" >> $env:GITHUB_OUTPUT
+          echo "${{ steps.read_changelog.outputs.changelog_b64 }}" | base64 -d > changelog_output.txt
+          echo "changelog<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          cat changelog_output.txt >> $GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
 
   build:
     needs: prepare
@@ -196,9 +200,7 @@ jobs:
           if (-not $csproj) { throw "未找到 .csproj 文件" }
           
           $OutputPath = "./output"
-          if (Test-Path $OutputPath) { 
-            Remove-Item $OutputPath -Recurse -Force 
-          }
+          if (Test-Path $OutputPath) { Remove-Item $OutputPath -Recurse -Force }
           New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
           
           dotnet restore $csproj.FullName
@@ -220,9 +222,7 @@ jobs:
           New-Item -ItemType Directory -Path $PackTemp -Force | Out-Null
           
           foreach ($file in $filesToPack) {
-            if (Test-Path $file) { 
-              Copy-Item $file $PackTemp/ 
-            }
+            if (Test-Path $file) { Copy-Item $file $PackTemp/ }
           }
           
           $cipxName = "$pluginName.$version.cipx"
@@ -264,40 +264,42 @@ jobs:
         with:
           name: ${{ env.PLUGIN_NAME }}-${{ needs.prepare.outputs.version }}
 
-      # 修复：使用 pwsh 处理多行内容
       - name: Create Release Body
         id: create_body
-        shell: pwsh
+        shell: bash
         run: |
-          $changelog = @'
-          ${{ needs.prepare.outputs.changelog }}
-          '@
+          VERSION="${{ needs.prepare.outputs.version }}"
+          SIZE="${{ needs.build.outputs.cipx_size }}"
+          MD5="${{ needs.build.outputs.cipx_md5 }}"
           
-          $version = "${{ needs.prepare.outputs.version }}"
-          $size = [int]"${{ needs.build.outputs.cipx_size }}"
-          $sizeStr = if ($size -lt 1KB) { "$size B" }
-                    elseif ($size -lt 1MB) { "{0:F2} KB" -f ($size/1KB) }
-                    else { "{0:F2} MB" -f ($size/1MB) }
+          if [ "$SIZE" -lt 1024 ]; then
+            SIZE_STR="${SIZE} B"
+          elif [ "$SIZE" -lt 1048576 ]; then
+            SIZE_STR=$(awk "BEGIN {printf \"%.2f KB\", $SIZE/1024}")
+          else
+            SIZE_STR=$(awk "BEGIN {printf \"%.2f MB\", $SIZE/1048576}")
+          fi
           
-          $body = @"
-          $changelog
+          CHANGELOG="${{ needs.prepare.outputs.changelog }}"
           
-          ## 文件信息
+          # 修复：只在手动生成时添加 "## 变更内容" 标题
+          {
+            echo "## 变更内容"
+            echo ""
+            echo "$CHANGELOG"
+            echo ""
+            echo "## 文件信息"
+            echo ""
+            echo "| 文件名 | 大小 | MD5 |"
+            echo "|--------|------|-----|"
+            echo "| ${{ env.PLUGIN_NAME }}.${VERSION}.cipx | ${SIZE_STR} | \`${MD5}\` |"
+            echo ""
+            echo "<!-- CLASSISLAND_PKG_MD5 {\"${{ env.PLUGIN_NAME }}.${VERSION}.cipx\":\"${MD5}\"} -->"
+          } > release_body.txt
           
-          | 文件名 | 大小 | MD5 |
-          |--------|------|-----|
-          | ${{ env.PLUGIN_NAME }}.$version.cipx | $sizeStr | ``${{ needs.build.outputs.cipx_md5 }}`` |
-          
-          <!-- CLASSISLAND_PKG_MD5 {"${{ env.PLUGIN_NAME }}.$version.cipx":"${{ needs.build.outputs.cipx_md5 }}"} -->
-          "@
-          
-          # 写入文件
-          $body | Out-File -FilePath "release_body.txt" -Encoding UTF8
-          
-          # 输出到 GITHUB_OUTPUT
-          echo "body<<BODY_EOF" >> $env:GITHUB_OUTPUT
-          Get-Content "release_body.txt" >> $env:GITHUB_OUTPUT
-          echo "BODY_EOF" >> $env:GITHUB_OUTPUT
+          echo "body<<BODY_EOF" >> $GITHUB_OUTPUT
+          cat release_body.txt >> $GITHUB_OUTPUT
+          echo "BODY_EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
