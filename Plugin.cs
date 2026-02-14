@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Security.Principal;
 using ClassIsland.Core;
@@ -16,54 +15,125 @@ public class Plugin : PluginBase
 {
     public Plugin()
     {
+        // 无参构造函数
     }
+    
+    private const string RestartFlag = "--uac-restarted";
 
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
+        // 检查是否已经重启过（防止无限循环）
+        if (IsRestarted())
+        {
+            return;
+        }
+
+        // 检查是否以管理员权限运行
         if (!IsRunningAsAdmin())
         {
             RestartAsAdmin();
         }
     }
 
-    private bool IsRunningAsAdmin()
+    /// <summary>
+    /// 检查是否已经重启过
+    /// </summary>
+    private bool IsRestarted()
     {
-        WindowsIdentity identity = WindowsIdentity.GetCurrent();
-        WindowsPrincipal principal = new WindowsPrincipal(identity);
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        return Environment.GetCommandLineArgs().Contains(RestartFlag);
     }
 
+    /// <summary>
+    /// 检查当前进程是否以管理员权限运行
+    /// </summary>
+    private bool IsRunningAsAdmin()
+    {
+        try
+        {
+            WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            WindowsPrincipal principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 获取可执行文件路径
+    /// </summary>
+    private string GetExecutablePath()
+    {
+        // 参考 StartUpAsAdmin 的实现，使用 Environment.ProcessPath 并替换 .dll 为 .exe
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(processPath))
+        {
+            // 如果无法获取进程路径，尝试使用 AppBase.ExecutingEntrance
+            return AppBase.ExecutingEntrance;
+        }
+        
+        // 简单直接地替换 .dll 为 .exe，与 StartUpAsAdmin 保持一致
+        if (processPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return processPath.Replace(".dll", ".exe");
+        }
+        
+        // 如果不是 .dll 文件，直接返回原路径
+        return processPath;
+    }
+
+    /// <summary>
+    /// 以管理员权限重启应用
+    /// </summary>
     private void RestartAsAdmin()
     {
         try
         {
+            // 获取当前命令行参数
+            var currentArgs = Environment.GetCommandLineArgs().ToList();
+            
+            // 移除程序路径（第一个参数）
+            if (currentArgs.Count > 0)
+            {
+                currentArgs.RemoveAt(0);
+            }
+
+            // 移除旧的重启标记（防止重复）
+            currentArgs.RemoveAll(arg => arg == RestartFlag);
+
+            // 添加重启标记
+            currentArgs.Add(RestartFlag);
+
+            // 使用更可靠的路径获取方式，参考 StartUpAsAdmin
+            var appPath = GetExecutablePath();
+
             var processStartInfo = new ProcessStartInfo()
             {
-                FileName = Environment.ProcessPath?.Replace(".dll", ".exe"),
-                Verb = "runas",
+                FileName = appPath,
+                Verb = "runas",  // 请求提升权限
                 UseShellExecute = true
             };
 
-            // 添加 -m 参数（第一次代码中的标记）
-            processStartInfo.ArgumentList.Add("-m");
-            
-            // 【关键改进】继承原始命令行参数，避免配置丢失
-            var args = Environment.GetCommandLineArgs().ToList();
-            args.RemoveAt(0); // 移除第0个元素（程序路径本身）
-            foreach (var arg in args)
+            // 添加参数
+            foreach (var arg in currentArgs)
             {
                 processStartInfo.ArgumentList.Add(arg);
             }
 
-            Process.Start(processStartInfo);
+            // 启动新进程
+            var process = Process.Start(processStartInfo);
             
-            // 【关键改进】立即停止，而非异步延迟2秒（避免竞态条件）
-            AppBase.Current?.Stop();
+            // 如果启动成功，停止当前应用
+            if (process != null)
+            {
+                AppBase.Current?.Stop();
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            // 保留异常捕获，避免插件初始化失败导致整个应用崩溃
-            // （第一次代码有Toast提示，但Plugin基类通常无此API，故静默处理）
+            // 记录错误，但不影响应用启动
+            Debug.WriteLine($"UAC 提权失败: {ex.Message}");
         }
     }
 }
