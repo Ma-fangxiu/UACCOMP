@@ -14,7 +14,7 @@ description: "检测 ClassIsland 是否以管理员权限运行，非管理员�
 author: "Ma-fangxiu"
 
 # 插件版本
-version: "1.0.0.1"
+version: "1.2.0.0"
 
 # 插件面向的 ClassIsland 版本
 apiVersion: "2.0.0.0"
