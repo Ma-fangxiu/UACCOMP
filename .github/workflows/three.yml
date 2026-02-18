@@ -23,6 +23,11 @@ on:
         required: true
         default: true
         type: boolean
+      create_release:
+        description: '是否创建 GitHub Release'
+        required: true
+        default: true
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.sha }}
@@ -213,6 +218,7 @@ jobs:
             "$PublishPath/$pluginName.pdb",
             "$PublishPath/$pluginName.dll",
             "$PublishPath/$pluginName.deps.json",
+            "$PublishPath/$pluginName.runtimeconfig.json",
             "$PublishPath/README.md",
             "$PublishPath/manifest.yml",
             "$PublishPath/icon.png"
@@ -255,6 +261,8 @@ jobs:
   release:
     needs: [prepare, build]
     runs-on: ubuntu-latest
+    # 只有在 push 事件时，或者手动触发且选择了创建 release 时才执行
+    if: github.event_name == 'push' || github.event.inputs.create_release == 'true'
     permissions:
       contents: write
 
