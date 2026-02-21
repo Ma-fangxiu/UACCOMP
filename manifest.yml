@@ -1,32 +1,10 @@
-# UAC COMP 插件清单文件
-# 检测管理员权限，非管理员时自动以管理员身份重启
-
-# 插件唯一标识符
-id: "UACComp"
-
-# 插件显示名称
-name: "UAC 助手"
-
-# 插件描述
-description: "检测 ClassIsland 是否以管理员权限运行，非管理员时自动以管理员身份重启。"
-
-# 插件作者
-author: "Ma-fangxiu"
-
-# 插件版本
-version: "1.2.0.0"
-
-# 插件面向的 ClassIsland 版本
-apiVersion: "2.0.0.0"
-
-# 插件入口程序集
-entranceAssembly: "UACComp.dll"
-
-# 插件主页 URL
-url: "https://github.com/Ma-fangxiu/UACCOMP"
-
-# 插件图标文件
-icon: "icon.png"
-
-# 插件自述文件
-readme: "README.md"
+id: UACComp
+name: UAC 助手
+description: 检测 ClassIsland 是否以管理员权限运行，非管理员时自动以管理员身份重启。
+author: Ma-fangxiu
+version: 1.1.0.0
+apiVersion: 2.0.0.0
+entranceAssembly: UACComp.dll
+url: https://github.com/Ma-fangxiu/UACCOMP
+icon: icon.png
+readme: README.md
