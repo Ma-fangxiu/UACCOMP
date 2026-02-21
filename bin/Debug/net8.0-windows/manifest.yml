@@ -1,0 +1,10 @@
+id: UACComp
+name: UAC 助手
+description: 检测 ClassIsland 是否以管理员权限运行，非管理员时自动以管理员身份重启。
+author: Ma-fangxiu
+version: 1.1.0.0
+apiVersion: 2.0.0.0
+entranceAssembly: UACComp.dll
+url: https://github.com/Ma-fangxiu/UACCOMP
+icon: icon.png
+readme: README.md
