@@ -15,7 +15,8 @@
 
 本项目参考了：
 - [StartUpAsAdmin](https://github.com/ClassIsland/StartUpAsAdmin)
-- [CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
+-
+[CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
 -
 [SystemTools](https://github.com/Programmer-MrWang/SystemTools)
 
