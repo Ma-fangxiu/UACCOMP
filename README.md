@@ -3,18 +3,23 @@
 本插件可以通过检测权限让 ClassIsland 在启动时以管理员身份启动。
 
 > [!IMPORTANT]
-> **温馨提示**：目前已知可能问题有：无法正常**启动ci**，重启时间长，恢复请到插件目录（plugin/uaccomp）强行卸载
+> **温馨提示**：第一次食用请到设置界面开启功能，本插件不默认开启
 
 ## 使用方法
 
 1. 在插件市场下载本插件；
-2. 放心(?食用
+2. 在插件设置界面中，启动插件功能
+3. 放心(?食用
 
-## 致谢
+## 声明
 
 本项目参考了：
 - [StartUpAsAdmin](https://github.com/ClassIsland/StartUpAsAdmin)
 - [CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
+-
+[SystemTools](https://github.com/Programmer-MrWang/SystemTools)
+
+感谢[Programmer-MrWang](https://github.com/Programmer-MrWang)对本插件的技术支持
 
 ## 许可证
 
