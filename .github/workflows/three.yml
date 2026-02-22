@@ -346,8 +346,6 @@ jobs:
           name: ${{ env.PLUGIN_NAME }} ${{ needs.prepare.outputs.version }}
           body: ${{ steps.create_body.outputs.body }}
           draft: ${{ needs.prepare.outputs.is_draft }}
-          prerelease: ${{ needs.prepare.outputs.is_prerelease }}
-          draft: ${{ needs.prepare.outputs.is_draft }}
           prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
           files: '*.cipx'
         env:
