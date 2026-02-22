@@ -2,7 +2,7 @@
 
 本插件可以通过检测权限让 ClassIsland 在启动时以管理员身份启动。
 
-> [!IMPORTANT]
+> [!NOTE]
 > **温馨提示**：第一次食用请到设置界面开启功能，本插件不默认开启
 
 ## 使用方法
@@ -18,7 +18,7 @@
 - [CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
 - [SystemTools](https://github.com/Programmer-MrWang/SystemTools)
 
-特别感谢[Programmer-MrWang](https://github.com/Programmer-MrWang)对本插件的技术支持
+特别感谢[@Programmer-MrWang](https://github.com/Programmer-MrWang)对本插件的技术支持
 
 ## 许可证
 
