@@ -15,12 +15,10 @@
 
 本项目参考了：
 - [StartUpAsAdmin](https://github.com/ClassIsland/StartUpAsAdmin)
--
-[CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
--
-[SystemTools](https://github.com/Programmer-MrWang/SystemTools)
+- [CIUACHelper](https://github.com/liuziheng20091106/CIUACHelper)
+- [SystemTools](https://github.com/Programmer-MrWang/SystemTools)
 
-感谢[Programmer-MrWang](https://github.com/Programmer-MrWang)对本插件的技术支持
+特别感谢[Programmer-MrWang](https://github.com/Programmer-MrWang)对本插件的技术支持
 
 ## 许可证
 
